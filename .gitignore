@@ -1,0 +1,10 @@
+# 编译产物（发布请用 build.sh 出二进制，走 GitHub Releases）
+bin/
+dist/
+
+# 运行时生成的个人数据
+data/user.txt
+
+# 日志与临时文件
+*.log
+/tmp/

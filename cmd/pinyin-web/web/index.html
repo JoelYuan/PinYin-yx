@@ -1,0 +1,222 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PinYin-yx 拼音查词</title>
+<style>
+  :root {
+    --primary: #1a53a8; --accent: #e07b00; --bg: #f5f6f8;
+    --card: #ffffff; --text: #222; --muted: #999;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: "Noto Sans CJK SC", "Noto Sans SC", sans-serif;
+    background: var(--bg); color: var(--text);
+    display: flex; justify-content: center; padding-top: 8vh; min-height: 100vh;
+  }
+  .card {
+    width: min(560px, 94vw); background: var(--card); border-radius: 14px;
+    box-shadow: 0 4px 24px rgba(0,0,0,.08); padding: 22px 24px; height: fit-content;
+  }
+  .title { font-size: 15px; color: var(--muted); margin-bottom: 14px; display: flex; justify-content: space-between; }
+  .title b { color: var(--primary); }
+  #committed {
+    min-height: 44px; font-size: 26px; line-height: 1.4; word-break: break-all;
+    border-bottom: 2px solid #eee; padding-bottom: 8px; margin-bottom: 12px;
+  }
+  #py {
+    width: 100%; font-size: 22px; padding: 10px 14px; border: 2px solid #ddd;
+    border-radius: 10px; outline: none; letter-spacing: 1px; color: var(--accent);
+  }
+  #py:focus { border-color: var(--primary); }
+  #py::placeholder { color: #bbb; letter-spacing: 0; font-size: 16px; }
+  #cands { display: flex; flex-wrap: wrap; gap: 8px; min-height: 46px; margin: 12px 0 6px; }
+  .cand {
+    font-size: 18px; color: var(--primary); background: #eef3fb; border-radius: 8px;
+    padding: 6px 12px; cursor: pointer; user-select: none; transition: .12s;
+  }
+  .cand:hover { background: var(--primary); color: #fff; }
+  .cand i { font-style: normal; opacity: .55; margin-right: 3px; }
+  .hint { font-size: 12.5px; color: var(--muted); margin-bottom: 10px; }
+  .punct-row { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; }
+  .punct-row span {
+    font-size: 15px; background: #f0f1f4; border-radius: 6px; padding: 4px 10px;
+    cursor: pointer; user-select: none;
+  }
+  .punct-row span:hover { background: #dde3ec; }
+  .cn-switch { font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 5px; }
+  .btns { display: flex; gap: 10px; }
+  button {
+    flex: 1; font-size: 16px; padding: 10px 0; border: none; border-radius: 10px;
+    cursor: pointer; background: var(--primary); color: #fff; transition: .12s;
+  }
+  button:hover { filter: brightness(1.1); }
+  button.ghost { background: #e8e8ec; color: var(--text); }
+  #toast {
+    position: fixed; left: 50%; bottom: 40px; transform: translateX(-50%);
+    background: #333; color: #fff; padding: 8px 20px; border-radius: 20px;
+    font-size: 14px; opacity: 0; pointer-events: none; transition: .25s;
+  }
+  #toast.show { opacity: .92; }
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="title"><b>PinYin-yx</b><span>离线拼音查词 · 词库 44 万条</span></div>
+  <div id="committed"></div>
+  <input id="py" type="text" autocomplete="off" autocapitalize="off"
+         spellcheck="false" placeholder="输入拼音，如 nihao / jie'jue / zhong'guo" autofocus>
+  <div id="cands"></div>
+  <div class="hint">1-9 或点击选词 · 空格选首选 · 数字/标点在拼音为空时直接上屏 · Esc 清空拼音</div>
+  <div class="punct-row" id="punctRow"></div>
+  <div class="btns" style="margin-top:10px;">
+    <button id="copy">复制组句</button>
+    <button id="clear" class="ghost">清空组句</button>
+  </div>
+  <label class="cn-switch"><input type="checkbox" id="cnPunct" checked> 中文标点（英文键位自动转换）</label>
+</div>
+<div id="toast"></div>
+
+<script>
+const py = document.getElementById('py');
+const candsEl = document.getElementById('cands');
+const committedEl = document.getElementById('committed');
+const toastEl = document.getElementById('toast');
+let cands = [], timer = null;
+
+function toast(msg) {
+  toastEl.textContent = msg;
+  toastEl.classList.add('show');
+  clearTimeout(toast._t);
+  toast._t = setTimeout(() => toastEl.classList.remove('show'), 1500);
+}
+
+async function query() {
+  const input = py.value.trim().toLowerCase();
+  if (!input) { cands = []; render(); return; }
+  const res = await fetch('/api/query', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({input})
+  });
+  cands = await res.json();
+  render();
+}
+
+function render() {
+  candsEl.innerHTML = '';
+  cands.forEach((c, i) => {
+    const d = document.createElement('div');
+    d.className = 'cand';
+    d.innerHTML = '<i>' + (i + 1) + '.</i>' + c.word;
+    d.onclick = () => pick(i);
+    candsEl.appendChild(d);
+  });
+}
+
+function appendCommitted(text) {
+  committedEl.textContent += text;
+  py.focus();
+}
+
+async function pick(i, suffix) {
+  if (i >= cands.length) return;
+  const word = cands[i].word;
+  committedEl.textContent += word + (suffix || '');
+  py.value = '';
+  cands = [];
+  render();
+  py.focus();
+  fetch('/api/learn', {
+    method: 'POST', headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({word})
+  });
+}
+
+// —— 中文标点：英文键位自动映射，引号自动配对 ——
+const CN_PUNCT = {
+  ',': '，', '.': '。', '?': '？', '!': '！', ';': '；', ':': '：',
+  '(': '（', ')': '）', '[': '【', ']': '】', '<': '《', '>': '》',
+  '~': '～', '-': '——'
+};
+let quoteOpen = true, squoteOpen = true;
+function toCnPunct(ch) {
+  if (ch === '"') { const q = quoteOpen ? '“' : '”'; quoteOpen = !quoteOpen; return q; }
+  if (ch === "'") { const q = squoteOpen ? '‘' : '’'; squoteOpen = !squoteOpen; return q; }
+  return CN_PUNCT[ch] || ch;
+}
+function isPunct(ch) {
+  return (ch in CN_PUNCT) || ch === '"' || ch === "'";
+}
+function punctOf(ch) {
+  return document.getElementById('cnPunct').checked ? toCnPunct(ch) : ch;
+}
+
+// 常用中文标点按钮
+const QUICK_PUNCT = ['，', '。', '？', '！', '、', '；', '：', '“', '”', '（', '）', '《', '》', '——', '……'];
+const punctRow = document.getElementById('punctRow');
+QUICK_PUNCT.forEach(p => {
+  const s = document.createElement('span');
+  s.textContent = p;
+  s.onclick = () => { appendCommitted(p); };
+  punctRow.appendChild(s);
+});
+
+py.addEventListener('input', () => {
+  clearTimeout(timer);
+  timer = setTimeout(query, 80);
+});
+
+py.addEventListener('keydown', e => {
+  const ch = e.key;
+  // 数字：拼音为空 → 直接上屏；有拼音 → 选词
+  if (ch >= '0' && ch <= '9') {
+    if (!py.value.trim()) { e.preventDefault(); appendCommitted(ch); }
+    else if (ch !== '0') { e.preventDefault(); pick(ch - 1); }
+    else { e.preventDefault(); }
+    return;
+  }
+  // 标点：拼音为空 → 直接上屏；有候选 → 首选+标点连上
+  if (ch.length === 1 && isPunct(ch)) {
+    e.preventDefault();
+    const p = punctOf(ch);
+    if (!py.value.trim()) { appendCommitted(p); }
+    else if (cands.length) { pick(0, p); }
+    else { appendCommitted(p); py.value = ''; cands = []; render(); }
+    return;
+  }
+  if (ch === ' ') {
+    if (py.value.trim() && cands.length) { e.preventDefault(); pick(0); }
+    return;
+  }
+  if (ch === 'Enter') {
+    e.preventDefault();
+    if (py.value.trim()) { committedEl.textContent += py.value.trim(); py.value = ''; cands = []; render(); py.focus(); }
+    return;
+  }
+  if (ch === 'Escape') { py.value = ''; cands = []; render(); }
+});
+
+document.getElementById('copy').onclick = async () => {
+  const text = committedEl.textContent;
+  if (!text) { toast('组句为空'); return; }
+  try {
+    await navigator.clipboard.writeText(text);
+    toast('已复制到剪贴板');
+  } catch {
+    const ta = document.createElement('textarea');
+    ta.value = text; document.body.appendChild(ta);
+    ta.select(); document.execCommand('copy'); ta.remove();
+    toast('已复制到剪贴板');
+  }
+};
+
+document.getElementById('clear').onclick = () => {
+  committedEl.textContent = '';
+  py.focus();
+};
+
+py.focus();
+</script>
+</body>
+</html>
